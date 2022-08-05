@@ -1,0 +1,376 @@
+---
+title: "Predictability framework for the Climatic Conditions of Global Biomes"
+author: 'Cassandra Choueifati'
+output: html_notebook
+---
+
+#### Load packages required for data analysis
+```{r, message=FALSE}
+library(tidync)
+library(tidyverse)
+library(R.utils)
+library(lubridate)
+library(purrr)
+```
+
+
+#### Load CRU timeseries data into workspace.
+```{r, eval=FALSE}
+TOTAL_PRECIP <- "cru_ts3.22.1901.2013.pre.dat.nc"
+TOTAL_TMP <- "cru_ts3.22.1901.2013.tmp.dat.nc"
+```
+
+
+#### Activate the hyper tibbles, which extracts the raw data into a tabular form. Begin temperature data and extract the variables of interest (i.e. latitude, longitiude, time) using the `activate` and `hyper_tibble` functions. 
+#### Time in this dataset is recorded as days from 1901. In order to make this in a more understandable format, use the `mutate` function to change the time into a year-month-date format. 
+```{r, eval=FALSE}
+lon  <- 
+    tidync(TOTAL_TMP) %>% activate("D0") %>% hyper_tibble()
+lat <-  
+    tidync(TOTAL_TMP) %>% activate("D1") %>% hyper_tibble()
+time <- 
+    tidync(TOTAL_TMP) %>% activate("D2") %>% hyper_tibble() %>%
+    mutate(time_ymd = as.Date(time, origin = "1900-01-01")) %>%
+    mutate(month= month(time_ymd, label= TRUE)) %>%
+    mutate(year= year(time_ymd))
+```
+
+#### Now create columns for time; date, month & year. Using `hyper_filter` remove values recorded before the year 1980, only focusing on data between 1980-2013. Also remove any latitudes greater than 70 degrees. 
+```{r, eval=FALSE}
+Total_data_tmp <-
+  tidync(TOTAL_TMP) %>% activate("tmp") %>%
+    hyper_filter(time = time >= 29234, lat = abs(lat) < 70) %>%
+  hyper_tibble() %>%
+  mutate(time = as.Date(time, origin = "1900-01-01")) %>%
+    mutate(month= month(time, label= TRUE))%>%
+    mutate(year= year(time))
+```
+
+#### From this, `nest `the temperature values and time columns to compressing all values for each latitude and longitude (12 months of observations for 33 yrs) into a column. 
+```{r, eval=FALSE}
+Total_data_tmp %>% nest(tmp_data=c(tmp, time, month, year)) -> location_data_tmp_nested
+
+location_data_tmp_nested
+```
+
+
+#### Now creating a function to run the linear model, extract R-squared, and calculating mean values. Using the `mutate` function, add new columns to store the new fitted values.
+```{r, message=FALSE}
+fit_tmp_model <- function(data) {
+    lm(tmp ~ month, data)
+}
+
+
+tmp_extract_r2 <- function(fit) {
+    summary(fit)$adj.r.squared
+}
+location_data_tmp_total <- location_data_tmp_nested %>%
+    mutate(
+        fit_tmp = map(tmp_data, fit_tmp_model),
+        mean_tmp = map_dbl(tmp_data, ~ mean(.x$tmp, na.rm = TRUE)),
+        tmp_r_squared = map_dbl(fit_tmp, tmp_extract_r2)
+    )
+```
+
+#### The filtered dataset can be condensed into an RDS file; this provides shortcut to load the data which contains just what's needed for our final plots, improving efficiency. 
+```{r, eval=FALSE}
+location_data_tmp_total %>% select(lat, lon, tmp_r_squared, mean_tmp) %>%
+    saveRDS("location_data_tmp_total.RDS")
+```
+
+#### Repeat the same procedure for the precipitation dataset, to be able to filter it, calculate and store variables of interest and save it as an `RDS` file. 
+
+#### Beging by activaing the variables of interest and placing them in a organised table using `hyper_tibble`. Once again, the `time` vector is also changed to year-month-day format using the `mutate` function.
+```{r}
+lon  <- 
+    tidync(TOTAL_PRECIP) %>% activate("D0") %>% hyper_tibble()
+lat <-  
+    tidync(TOTAL_PRECIP) %>% activate("D1") %>% hyper_tibble()
+time <- 
+    tidync(TOTAL_PRECIP) %>% activate("D2") %>% hyper_tibble() %>%
+    mutate(time_ymd = as.Date(time, origin = "1900-01-01")) %>%
+    mutate(month= month(time_ymd, label= TRUE)) %>%
+    mutate(year= year(time_ymd))
+```
+
+
+#### Now create new columns for new time variables; date, month and year.
+```{r, eval=FALSE}
+Total_data_pre <-
+  tidync(TOTAL_PRECIP) %>% activate("pre") %>%
+    hyper_filter(time = time >= 29234, lat = abs(lat) < 70) %>%
+  hyper_tibble() %>%
+  mutate(time = as.Date(time, origin = "1900-01-01")) %>%
+    mutate(month= month(time, label= TRUE))%>%
+    mutate(year= year(time))
+```
+
+
+#### Now `nest` the precipitation values and time columns. This compresses all values for each latitude and longitude (12 months of observations for 33 years).
+```{r, eval=FALSE}
+Total_data_pre %>% nest(pre_data=c(pre, time, month, year)) -> location_data_pre_nested
+
+location_data_pre_nested
+```
+
+
+#### Creating a function to run the linear model, extracted R-Squared values, and calculating mean values. Adding new columns using `mutate` to store new values being calculated.
+```{r, message=FALSE}
+fit_pre_model <- function(data) {
+    lm(pre ~ month, data)
+}
+
+
+pre_extract_r2 <- function(fit) {
+    summary(fit)$adj.r.squared
+}
+location_data_pre_total <- location_data_pre_nested %>%
+    mutate(
+        fit_pre = map(pre_data, fit_pre_model),
+        mean_pre = map_dbl(pre_data, ~ mean(.x$pre, na.rm = TRUE)),
+        pre_r_squared = map_dbl(fit_pre, pre_extract_r2)
+    )
+```
+
+
+#### The filtered precipitation dataset is then condensed into an RDS file and saved using `saveRDS`. This provides a shortcut, particularly when returning to the code in the future, in being able to load the data which contains just what is needed to produce the final plots.
+```{r, eval=FALSE}
+location_data_pre_total %>% select(lat, lon, pre_r_squared, mean_pre) %>%
+    saveRDS("location_data_pre_total.RDS")
+```
+
+
+#### Shortcut for loading the pre-made RDS files for temperature and precipitation.
+```{r}
+location_data_pre_total <- readRDS("location_data_pre_total.RDS")
+location_data_tmp_total <- readRDS("location_data_tmp_total.RDS")
+```
+
+
+#### Using `ggplot` create a plot of the temperature R-squared values. As each point holds a value, assign the `colour` of each point to reflect the `tmp_r_squared` values and add a colour gradient, `scale_colour_viridis_c` in order to be able to distingush the different values. 
+```{r}
+ggplot(location_data_tmp_total, aes(y = lat, x = lon)) +
+    geom_point(aes(colour = tmp_r_squared)) +
+    scale_colour_viridis_c()
+```
+
+#### Repeat the above step, to generate a plot for the global precipitation R-squared values. 
+```{r}
+ggplot(location_data_pre_total, aes(y = lat, x = lon)) +
+    geom_point(aes(colour = pre_r_squared)) +
+    scale_colour_viridis_c()
+```
+
+
+#### Load in global biome dataset into workspace, using `read.csv` and assign it a name. 
+```{r, eval=FALSE}
+read.csv("CRU_biome.csv") -> biome
+```
+
+#### Start by the filtering the global `biome` dataset to remove arctic regions, by piping `biome` into a `filter` to remove latitudes greater than 70 degrees.  
+```{r}
+biome_filtered <- biome %>%
+    filter(abs(lat) < 70)
+```
+
+
+#### Taking `biome_filtered` produce a map to display the distribution of the 14 major biomes across the globe. This is to provide a visual of where the biomes are currently defined across the globe. 
+```{r}
+global_biomes <- biome_filtered %>%
+    filter(!BIOME %in% c(0, 98, 99)) %>%
+    mutate(BIOME = as_factor(BIOME)) %>%
+    ggplot(aes(x = lon, y = lat)) +
+    geom_point(aes(colour = BIOME))
+
+global_biomes
+```
+
+
+#### In order to analyse the impact of climatic conditions on biomes, `location_data_tmp_total` and `location_data_pre_total` datasets must be joined together with `biome_filtered`. 
+#### To join `location_data_tmp_total` to `biome_filtered`, use the `pipe` and `left_join` function.  
+```{r, message=FALSE}
+location_data_tmp_biome <- location_data_tmp_total %>%
+    left_join(biome_filtered)
+```
+
+
+#### Set biome as categorical variable, calculate the mean r-squared, mean temperature and standard deviations through the `summarise` function.
+```{r}
+location_data_tmp_biome %>%
+    group_by(BIOME) %>%
+    summarize(
+        mean_tmp_r2 = mean(tmp_r_squared, na.rm = TRUE),
+        biome_mean_tmp = mean(mean_tmp, na.rm = TRUE),
+        sd_tmp_r2 = sd(tmp_r_squared, na.rm = TRUE),
+        sd_biome_tmp = sd(mean_tmp, na.rm = TRUE)
+    ) -> plot_data_tmp
+```
+
+
+#### To plot mean R-squared for temperature vs. mean temperature, take `plot_data_tmp` (calculated above) and `pipe` it into the `ggplot`. In doing so, include a `pipe` to remove biome points `0,98,99`. Use the `mutate` function to group the data according to the categorical variable `BIOME`.
+#### Now `pipe` all this into ggplot and assign the correct varibles for the x and y axis. Plot labels can be added using `ggtitle`.
+```{r}
+plot_data_tmp %>%
+    filter(!BIOME %in% c(0, 98, 99)) %>%
+    mutate(BIOME = as_factor(BIOME)) %>%
+    ggplot(aes(x = biome_mean_tmp, y = mean_tmp_r2)) +
+    geom_point(aes(colour = BIOME), size = 2.5) +
+    geom_errorbar(
+        aes(
+            colour = BIOME,
+            width = 1.5,
+            ymin = mean_tmp_r2 - sd_tmp_r2,
+            ymax = mean_tmp_r2 + sd_tmp_r2
+        )
+    ) +
+    geom_errorbarh(
+        aes(
+            colour = BIOME,
+            height = 0.03,
+            xmin = biome_mean_tmp - sd_biome_tmp,
+            xmax = biome_mean_tmp + sd_biome_tmp
+        )
+    ) +
+    geom_text(aes(label = BIOME, colour = BIOME),
+              nudge_y = -0.03,
+              nudge_x = 0.55) +
+    ggtitle("Mean R-squared vs. Mean Annual Temperature Across Global Biomes") +
+    xlab("Mean Annual Temperature Value (°C)") +
+    ylab("Mean Temperature R-squared") +
+    theme_classic()
+```
+
+#### Repeat the same procedure that was for temperature data now for the precipitation data, in order to combine together with the biome data and produce plots and graphs. 
+ 
+#### Begin by joining `location_data_pre_total` to `biome_filtered`.
+```{r, message=FALSE}
+location_data_pre_biome <- location_data_pre_total %>%
+    left_join(biome_filtered)
+```
+
+#### After combing the biome dataset to precipitation we need to set biome as categorical variable using `group_by`. This will organise all variables and connect them to each biome and its corresponding latitude and longitude. Then calculate the mean R-squared and standard deviations using the `summarise` function within the `dplyr` package. 
+```{r}
+location_data_pre_biome %>%
+    group_by(BIOME) %>%
+    summarize(
+        mean_pre_r2 = mean(pre_r_squared, na.rm = TRUE),
+        biome_mean_pre = mean(mean_pre, na.rm = TRUE),
+        sd_pre_r2 = sd(pre_r_squared, na.rm = TRUE),
+        sd_biome_pre = sd(mean_pre, na.rm = TRUE)
+    ) -> plot_data_pre
+```
+
+#### Plot Mean R-squared for Precipitation vs. Mean Annual Precipitation across all major biomes.
+#### Repeating the same process that was done for temperature, above, taking `plot_data_pre` and `pipe` it into the `ggplot`. In doing so, include a `pipe` to `filter` biome points `0,98,99`. Use the `mutate` function to group the data according to the categorical variable `BIOME`. `Pipe` this all this into ggplot and assign the correct varibles for the x and y axis. Plot labels can be added using `ggtitle`. 
+```{r}
+plot_data_pre %>%
+    filter(!BIOME %in% c(0, 98, 99)) %>%
+    mutate(BIOME = as_factor(BIOME)) %>%
+    ggplot(aes(x = biome_mean_pre, y = mean_pre_r2)) +
+    geom_point(aes(colour = BIOME), size = 2.5) +
+    geom_errorbar(
+        aes(
+            colour = BIOME,
+            width = 9,
+            ymin = mean_pre_r2 - sd_pre_r2,
+            ymax = mean_pre_r2 + sd_pre_r2
+        )
+    ) +
+    geom_errorbarh(
+        aes(
+            colour = BIOME,
+            height = 0.03,
+            xmin = biome_mean_pre - sd_biome_pre,
+            xmax = biome_mean_pre + sd_biome_pre
+        )
+    ) +
+    geom_text(aes(label = BIOME, colour = BIOME),
+              nudge_y = -0.05,
+              nudge_x = 0.012) +
+    ggtitle("Mean Precipitation R-squared vs. Mean Annual Precipitation") +
+    xlab("Mean Annual Precipitation Value (mm/month)") +
+    ylab("Mean Precipitation R-squared") +
+    theme_classic()
+```     
+
+
+#### Combine `plot_data_pre` with `plot_data_tmp` in order to generate plots where key variables from both temperature and precipitation data can be extracted and plotted.
+```{r, message=FALSE}
+plot_data_combined <- plot_data_pre %>%
+    left_join(plot_data_tmp)
+```
+
+
+#### Plot Mean annual temperature vs. Mean annual precipitation across all major biomes.
+#### To do this we feed our combined dataset, `plot_data_combined`, which includes temperature, precipitaiton and global biomes into a plot using the `pipe` function. Then using the `mutate` function we create a new column `BIOME` which  provides a list of numbers from 1-14 which are assigned to their respective climatic  values. Utilising `ggplot` we produce a plot of `biome_mean_pre` vs `biome_mean_tmp`. The `geom_errorbar` allows standard deviations to be included for each point on the graph.
+```{r}
+plot_data_combined %>%
+    filter(!BIOME %in% c(0, 98, 99)) %>%
+    mutate(BIOME = as_factor(BIOME)) %>%
+    ggplot(aes(x = biome_mean_tmp, y = biome_mean_pre)) +
+    geom_point(aes(colour = BIOME), size = 2.5) +
+    geom_errorbar(
+        aes(
+            colour = BIOME,
+            width = 9,
+            ymin = biome_mean_pre - sd_biome_pre,
+            ymax = biome_mean_pre + sd_biome_pre
+        )
+    ) +
+    geom_errorbarh(
+        aes(
+            colour = BIOME,
+            height = 2,
+            xmin = biome_mean_tmp - sd_biome_tmp,
+            xmax = biome_mean_tmp + sd_biome_tmp
+        )
+    ) +
+    geom_text(aes(label = BIOME, colour = BIOME),
+              nudge_y = 1.2,
+              nudge_x = 1.2) +
+    ggtitle("Mean Annual Temperature vs. Mean Annual Precipitation") +
+    xlab("Mean Annual Temperature (°C)") +
+    ylab("Mean Annual Precipitation (mm/month)") +
+    theme_classic()
+```
+
+
+#### Plot mean R-squared temperature vs. mean R-squared precipitation for all major global biomes. 
+#### Once again we filter out biome data points `0,98,99` and use the `mutate` function to create a new variable `BIOME` which  provides a list of numbers from 1-14 that will be are assigned to their respective climatic values. Utilising `ggplot` we produce a plot which reveals `mean_pre_r2` vs `mean_tmp_r2`. The `geom_errorbar` allows standard deviations to be included for each biome point on the graph. 
+```{r}
+plot_data_combined %>%
+    filter(!BIOME %in% c(0, 98, 99)) %>%
+    mutate(BIOME = as_factor(BIOME)) %>%
+    ggplot(aes(x = mean_tmp_r2, y = mean_pre_r2)) +
+    geom_point(aes(colour = BIOME), size = 2.5) +
+    geom_errorbar(
+        aes(
+            colour = BIOME,
+            width = 0.025,
+            ymin = mean_pre_r2 - sd_pre_r2,
+            ymax = mean_pre_r2 + sd_pre_r2
+        )
+    ) +
+    geom_errorbarh(
+        aes(
+            colour = BIOME,
+            height = 0.03,
+            xmin = mean_tmp_r2 - sd_tmp_r2,
+            xmax = mean_tmp_r2 + sd_tmp_r2
+        )
+    ) +
+    geom_text(aes(label = BIOME, colour = BIOME),
+              nudge_y = -0.05,
+              nudge_x = 0.012) +
+    ggtitle("Mean R-squared Temperature vs. Mean R-squared Precipitation") +
+    xlab("Mean Temperature R-squared") +
+    ylab("Mean Precipitation R-squared") +
+    theme_classic()
+```
+
+
+
+
+
+
+
